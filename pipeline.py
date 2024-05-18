@@ -10,23 +10,26 @@ from sklearn.metrics import confusion_matrix, accuracy_score, roc_curve, roc_auc
 from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LogisticRegression
 from sklearn.tree import DecisionTreeClassifier
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.svm import SVC
+from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
 from sklearn.linear_model import LogisticRegression
 import matplotlib.pyplot as plt
 import seaborn as sns
 import json
+import xgboost as xgb
 
 # 創建一個字典來存儲你想要訓練的模型
 models = {
     'Logistic Regression': LogisticRegression(max_iter=1000),
     'Decision Tree': DecisionTreeClassifier(),
     'Random Forest': RandomForestClassifier(),
-    'SVM': SVC(probability=True),
-    'DNN': None
+    # 'SVM': SVC(probability=True),
+    'Gradient Boosting': GradientBoostingClassifier(),
+    'XGBoost': xgb.XGBClassifier(use_label_encoder=False, eval_metric='logloss'),
+    'DNN': None,
+    'DeepFM': None
 }
 
-data = pd.read_csv('../train_data_ads.csv')
+data = pd.read_csv('../../train_data_ads.csv')
 print("data is loaded...")
 
 #%%
@@ -56,12 +59,11 @@ class UtilityEvaluator:
         if all the files exist already, just read the datasets
         otherwise, get the train, holdout, valid datasets by splitting the task data
         """
-        if os.path.exists(f"../data/{self.task_id}"):
-            self.df_train = pd.read_csv(f'../data/{self.task_id}/df_{self.task_id}_train.csv')
-            self.df_holdout = pd.read_csv(f'../data/{self.task_id}/df_{self.task_id}_holdout.csv')
-            self.df_val = pd.read_csv(f'../data/{self.task_id}/df_{self.task_id}_val.csv')
-            self.df_synthetic_train = pd.read_csv(f'../data/{self.task_id}/synthetic/synthetic_df_{self.task_id}_train.csv')
-            self.df_synthetic_holdout = pd.read_csv(f'../data/{self.task_id}/synthetic/synthetic_df_{self.task_id}_holdout.csv')
+        if os.path.exists(f"../../data/{self.task_id}"):
+            self.df_train = pd.read_csv(f'../../data/{self.task_id}/df_{self.task_id}_train.csv')
+            self.df_holdout = pd.read_csv(f'../../data/{self.task_id}/df_{self.task_id}_holdout.csv')
+            self.df_val = pd.read_csv(f'../../data/{self.task_id}/df_{self.task_id}_val.csv')
+            self.df_synthetic_train = pd.read_csv(f'../../data/{self.task_id}/synthetic/synthetic_df_{self.task_id}_train.csv')
             
             df_task = data[data['task_id'] == self.task_id]
             self.calculate_label_rate(df_task)
@@ -69,8 +71,7 @@ class UtilityEvaluator:
             self.calculate_label_rate(self.df_holdout)
             self.calculate_label_rate(self.df_val)
             self.calculate_label_rate(self.df_synthetic_train)
-            self.calculate_label_rate(self.df_synthetic_holdout)
-            # self.df_test = pd.read_csv(f'../data/{self.task_id}/df_{self.task_id}_test.csv')
+            # self.df_test = pd.read_csv(f'../../data/{self.task_id}/df_{self.task_id}_test.csv')
             return
         
         # get the task data
@@ -134,12 +135,12 @@ class UtilityEvaluator:
         # self.df_test = df_test.sample(frac=1).reset_index(drop=True)
 
         # 儲存隨機排序後的df_train
-        self.df_train.to_csv(f'../data/{self.task_id}/df_{self.task_id}_train.csv', index=False)
+        self.df_train.to_csv(f'../../data/{self.task_id}/df_{self.task_id}_train.csv', index=False)
         # 儲存隨機排序後的df_holdout
-        self.df_holdout.to_csv(f'../data/{self.task_id}/df_{self.task_id}_holdout.csv', index=False)
+        self.df_holdout.to_csv(f'../../data/{self.task_id}/df_{self.task_id}_holdout.csv', index=False)
         # 儲存隨機排序後的df_val和df_test
-        self.df_val.to_csv(f'../data/{self.task_id}/df_{self.task_id}_val.csv', index=False)
-        # self.df_test.to_csv(f'../data/{self.task_id}/df_{self.task_id}_test.csv', index=False)
+        self.df_val.to_csv(f'../../data/{self.task_id}/df_{self.task_id}_val.csv', index=False)
+        # self.df_test.to_csv(f'../../data/{self.task_id}/df_{self.task_id}_test.csv', index=False)
 
     def prep_data_modeling(self):
         # 假設你的目標變量列名叫 'label'
@@ -149,12 +150,9 @@ class UtilityEvaluator:
         self.X_holdout = self.df_holdout.drop('label', axis=1)  # holdout集特徵數據
         self.y_holdout = self.df_holdout['label']  # holdout集目標數據
 
-        if self.df_synthetic_train is not None and self.df_synthetic_holdout is not None:
+        if self.df_synthetic_train is not None:
             self.X_synthetic_train = self.df_synthetic_train.drop('label', axis=1)  # synthetic data based on training data
             self.y_synthetic_train = self.df_synthetic_train['label']  # synthetic data based on training data
-
-            self.X_synthetic_holdout = self.df_synthetic_holdout.drop('label', axis=1)  # synthetic data based on holdout data
-            self.y_synthetic_holdout = self.df_synthetic_holdout['label']  # synthetic data based on holdout data
 
         self.X_val = self.df_val.drop('label', axis=1)  # 驗證集特徵數據
         self.y_val = self.df_val['label']  # 驗證集目標數據
@@ -169,30 +167,35 @@ class UtilityEvaluator:
     def get_results_and_plot(self):
         datasets = {"train": (self.X_train, self.y_train), 
             "holdout": (self.X_holdout, self.y_holdout), 
-            "synthetic_train": (self.X_synthetic_train, self.y_synthetic_train), 
-            "synthetic_holdout": (self.X_synthetic_holdout, self.y_synthetic_holdout)}
-        self.all_data_results = {"train": None, "holdout": None, "synthetic_train": None, "synthetic_holdout": None}
+            "synthetic_train": (self.X_synthetic_train, self.y_synthetic_train)}
+        self.all_data_results = {"train": None, "holdout": None, "synthetic_train": None}
         # Initialize subplot indices
         roc_subplot_index = 1
         pr_subplot_index = 2
         for data in self.all_data_results:
             results = pd.DataFrame(index=models.keys(), columns=['Accuracy', 'AUC', 'TPR', 'FPR', 'TNR', 'FNR'])
-
+            performance_comparison = pd.DataFrame(index=models.keys(), 
+                                                  columns=["train_holdout_auc_diff", 
+                                                           "synth_train_auc_diff", 
+                                                           "auc_diff_ratio",
+                                                           "train_holdout_tpr_diff", 
+                                                           "synth_train_tpr_diff", 
+                                                           "tpr_diff_ratio"])
             # 設定圖片尺寸和布局
             plt.figure(figsize=(12, 6))
 
             # 第一個subplot為ROC曲線
             plt.subplot(1, 2, 1)
-            colors = ['blue', 'green', 'red', 'purple']  # 每個模型一個顏色
+            colors = ['blue', 'green', 'red', 'purple', 'black', 'yellow', 'orange']  # 每个模型一个颜色
             model_index = 0
 
             # 第二個subplot為Precision-Recall曲線
             plt.subplot(1, 2, 2)
-            colors = ['blue', 'green', 'red', 'purple', 'yellow']  # 重設顏色索引
+            colors = ['blue', 'green', 'red', 'purple', 'black', 'yellow', 'orange']  # 重設顏色索引
             
             for name, model in models.items():
-                if name == 'DNN':
-                    y_proba = np.loadtxt(f"../data/{self.task_id}/predictions/{data}_{self.task_id}_predictions.txt")
+                if name == 'DNN' or name == 'DeepFM':
+                    y_proba = np.loadtxt(f"../../data/{self.task_id}/predictions/{name}_{data}_{self.task_id}_predictions.txt")
                     y_pred = (y_proba > 0.5).astype(int)
                 else:
                     try:
@@ -239,6 +242,7 @@ class UtilityEvaluator:
                 plt.plot(recall, precision, color=colors[model_index], lw=2, label=f'{name} PR (AP = {ap:.2f})')
 
                 model_index += 1
+            print(data)
             print(results)
             self.all_data_results[data] = results
             plt.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--')
@@ -255,7 +259,7 @@ class UtilityEvaluator:
             plt.tight_layout()
             plt.show()
 
-        print(self.all_data_results)
+        # print(self.all_data_results)
         # Convert the dictionary of DataFrames to a dictionary of JSON-compatible dictionaries
         json_data_dict = {key: self.dataframe_to_dict(df) for key, df in self.all_data_results.items()}
 
@@ -265,14 +269,44 @@ class UtilityEvaluator:
         with open(json_file_path, 'w') as json_file:
             json.dump(json_data_dict, json_file, indent=4)  # Use indent for pretty formatting
 
+    def compute_performance_comparison(self):
+        performance_comparison = pd.DataFrame(index=models.keys(), columns=[
+            "train_holdout_auc_diff", "synth_train_auc_diff", "auc_diff_ratio",
+            "train_holdout_tpr_diff", "synth_train_tpr_diff", "tpr_diff_ratio"
+        ])
+        for name in models.keys():
+            train_auc = self.all_data_results['train'].loc[name, 'AUC']
+            holdout_auc = self.all_data_results['holdout'].loc[name, 'AUC']
+            synth_train_auc = self.all_data_results['synthetic_train'].loc[name, 'AUC']
+
+            train_holdout_auc_diff = train_auc - holdout_auc
+            synth_train_auc_diff = train_auc - synth_train_auc
+            auc_diff_ratio = (synth_train_auc_diff - train_holdout_auc_diff) / train_holdout_auc_diff
+
+            train_tpr = self.all_data_results['train'].loc[name, 'TPR']
+            holdout_tpr = self.all_data_results['holdout'].loc[name, 'TPR']
+            synth_train_tpr = self.all_data_results['synthetic_train'].loc[name, 'TPR']
+
+            train_holdout_tpr_diff = train_tpr - holdout_tpr
+            synth_train_tpr_diff = train_tpr - synth_train_tpr
+            tpr_diff_ratio = (synth_train_tpr_diff - train_holdout_tpr_diff) / train_holdout_tpr_diff
+
+            performance_comparison.loc[name] = [
+                train_holdout_auc_diff, synth_train_auc_diff, auc_diff_ratio,
+                train_holdout_tpr_diff, synth_train_tpr_diff, tpr_diff_ratio
+            ]
+        print(performance_comparison)
+        performance_comparison.to_csv(f"pipeline_results/{self.task_id}_performance_comparison.csv", index=False)
+
     def process_evaluation(self):
         self.get_data()
         self.prep_data_modeling()
         self.get_results_and_plot()
+        self.compute_performance_comparison()
 
 #%%
 evaluator = UtilityEvaluator(
-    task_id = 31941
+    task_id = 14584
 )
 
 evaluator.process_evaluation()
