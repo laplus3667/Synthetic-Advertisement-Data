@@ -16,6 +16,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import json
 import xgboost as xgb
+from sklearn.naive_bayes import GaussianNB
 
 # 創建一個字典來存儲你想要訓練的模型
 models = {
@@ -25,6 +26,7 @@ models = {
     # 'SVM': SVC(probability=True),
     'Gradient Boosting': GradientBoostingClassifier(),
     'XGBoost': xgb.XGBClassifier(use_label_encoder=False, eval_metric='logloss'),
+    'GaussianNB': GaussianNB(),
     'DNN': None,
     'DeepFM': None
 }
@@ -54,29 +56,14 @@ class UtilityEvaluator:
         # Print the sizes of positive and negative samples along with the label rate, formatted to two decimal places.
         print("Total Sample size is {}, Positive Sample size is {}, Negative Sample size is {}, label rate is {:.4f}".format(total_samples, positive_count, negative_count, label_rate))
     
-    def get_data(self):
+    def split_data(self):
         """
-        if all the files exist already, just read the datasets
-        otherwise, get the train, holdout, valid datasets by splitting the task data
+        get the train, holdout, valid datasets by splitting the task data
         """
-        if os.path.exists(f"../../data/{self.task_id}"):
-            self.df_train = pd.read_csv(f'../../data/{self.task_id}/df_{self.task_id}_train.csv')
-            self.df_holdout = pd.read_csv(f'../../data/{self.task_id}/df_{self.task_id}_holdout.csv')
-            self.df_val = pd.read_csv(f'../../data/{self.task_id}/df_{self.task_id}_val.csv')
-            self.df_synthetic_train = pd.read_csv(f'../../data/{self.task_id}/synthetic/synthetic_df_{self.task_id}_train.csv')
-            
-            df_task = data[data['task_id'] == self.task_id]
-            self.calculate_label_rate(df_task)
-            self.calculate_label_rate(self.df_train)
-            self.calculate_label_rate(self.df_holdout)
-            self.calculate_label_rate(self.df_val)
-            self.calculate_label_rate(self.df_synthetic_train)
-            # self.df_test = pd.read_csv(f'../../data/{self.task_id}/df_{self.task_id}_test.csv')
-            return
-        
         # get the task data
         df_task = data[data['task_id'] == self.task_id]
-        columns_to_drop = [column for column in df_task.columns if df_task[column].nunique() > 1000]
+        print(f"Task data shape is {df_task.shape}")
+        columns_to_drop = [column for column in df_task.columns if df_task[column].nunique() > 1000 or df_task[column].nunique() == 1]
         df_task = df_task.drop(columns=columns_to_drop)
         df_task = df_task.select_dtypes(include=[np.number])
         self.df_task = df_task
@@ -88,12 +75,10 @@ class UtilityEvaluator:
         total_samples_label_0 = len(df_label_0)
         train_size_label_0 = int(0.4 * total_samples_label_0)
         holdout_size_label_0 = int(0.4 * total_samples_label_0)
-        # validate_size_label_0 = total_samples_label_0 - train_size_label_0 - holdout_size_label_0
         # 對 label 為 1 的數據集進行分割
         total_samples_label_1 = len(df_label_1)
         train_size_label_1 = int(0.4 * total_samples_label_1)
         holdout_size_label_1 = int(0.4 * total_samples_label_1)
-        # validate_size_label_1 = total_samples_label_1 - train_size_label_1 - holdout_size_label_1
 
         df_label_0_train = df_label_0.sample(n=train_size_label_0, random_state=42)
         df_label_0_hold = df_label_0.drop(df_label_0_train.index).sample(n=holdout_size_label_0, random_state=42)
@@ -103,44 +88,70 @@ class UtilityEvaluator:
         df_label_1_hold = df_label_1.drop(df_label_1_train.index).sample(n=holdout_size_label_1, random_state=42)
         df_label_1_val = df_label_1.drop(df_label_1_train.index).drop(df_label_1_hold.index)
         
-        # # Calculate the sizes of the testing datasets by divide the current validate dataset size by 2
-        # test_size_label_0 = validate_size_label_0 // 2
-        # test_size_label_1 = validate_size_label_1 // 2
-        # # Sample the required number of rows for each label from the validation dataset
-        # df_label_0_test = df_label_0_val.sample(n=test_size_label_0, random_state=42)
-        # df_label_1_test = df_label_1_val.sample(n=test_size_label_1, random_state=42)
-        # # Calculate the remaining rows for each label to create the validation dataset
-        # df_label_0_val = df_label_0_val.drop(df_label_0_test.index)
-        # df_label_1_val = df_label_1_val.drop(df_label_1_test.index)
-       
         # 將 label 為 0 和 label 為 1 的 train 子數據集合併成 df_train
         df_train = pd.concat([df_label_0_train, df_label_1_train])
         # 將 label 為 0 和 label 為 1 的 holdout 子數據集合併成 df_holdout
         df_holdout = pd.concat([df_label_0_hold, df_label_1_hold])
         # 將 label 為 0 和 label 為 1 的 holdout 子數據集合併成 df_val
         df_val = pd.concat([df_label_0_val, df_label_1_val])
-        # 將 label 為 0 和 label 為 1 的 holdout 子數據集合併成 df_test
-        # df_test = pd.concat([df_label_0_test, df_label_1_test])
 
         self.calculate_label_rate(self.df_task)
         self.calculate_label_rate(df_train)
         self.calculate_label_rate(df_holdout)
         self.calculate_label_rate(df_val)
-        # self.calculate_label_rate(df_test)
+
+        print(f"Train data shape is {df_train.shape}")
+        print(f"Holdout data shape is {df_holdout.shape}")
+        print(f"Validation data shape is {df_val.shape}")
 
         # shuffle the datasets
         self.df_train = df_train.sample(frac=1).reset_index(drop=True)
         self.df_holdout = df_holdout.sample(frac=1).reset_index(drop=True)
         self.df_val = df_val.sample(frac=1).reset_index(drop=True)
-        # self.df_test = df_test.sample(frac=1).reset_index(drop=True)
 
         # 儲存隨機排序後的df_train
         self.df_train.to_csv(f'../../data/{self.task_id}/df_{self.task_id}_train.csv', index=False)
+        df_label_0_train = df_label_0_train.drop("label", axis=1)
+        df_label_1_train = df_label_1_train.drop("label", axis=1)
+        print(f"Train0 data shape is {df_label_0_train.shape}")
+        print(f"Train1 data shape is {df_label_1_train.shape}")
+        df_label_0_train.to_csv(f'../../data/{self.task_id}/df_{self.task_id}_train0.csv', index=False)
+        df_label_1_train.to_csv(f'../../data/{self.task_id}/df_{self.task_id}_train1.csv', index=False)
+
         # 儲存隨機排序後的df_holdout
         self.df_holdout.to_csv(f'../../data/{self.task_id}/df_{self.task_id}_holdout.csv', index=False)
         # 儲存隨機排序後的df_val和df_test
         self.df_val.to_csv(f'../../data/{self.task_id}/df_{self.task_id}_val.csv', index=False)
         # self.df_test.to_csv(f'../../data/{self.task_id}/df_{self.task_id}_test.csv', index=False)
+
+    def read_data(self):
+        """
+        if all the files exist already, just read the datasets
+        """
+        self.df_train = pd.read_csv(f'../../data/{self.task_id}/df_{self.task_id}_train.csv')
+        self.df_holdout = pd.read_csv(f'../../data/{self.task_id}/df_{self.task_id}_holdout.csv')
+        self.df_val = pd.read_csv(f'../../data/{self.task_id}/df_{self.task_id}_val.csv')
+        # Save combined synthetic data if the file does not exist
+        base_path = f'../../data/{self.task_id}'
+        synthetic_train_path = f'{base_path}/synthetic/synthetic_df_{self.task_id}_train.csv'
+        if not os.path.exists(synthetic_train_path):
+            df_synthetic_train0 = pd.read_csv(f'../../data/{self.task_id}/synthetic/synthetic_df_{self.task_id}_train0.csv')
+            df_synthetic_train1 = pd.read_csv(f'../../data/{self.task_id}/synthetic/synthetic_df_{self.task_id}_train1.csv')
+            df_synthetic_train0['label'] = 0
+            df_synthetic_train1['label'] = 1
+            df_synthetic_train  = pd.concat([df_synthetic_train0, df_synthetic_train1])
+            self.df_synthetic_train = df_synthetic_train.sample(frac=1).reset_index(drop=True)
+            self.df_synthetic_train.to_csv(synthetic_train_path, index=False)
+        else:
+            self.df_synthetic_train = pd.read_csv(f'../../data/{self.task_id}/synthetic/synthetic_df_{self.task_id}_train.csv')
+        print("The train data: ")
+        self.calculate_label_rate(self.df_train)
+        print("The holdout data: ")
+        self.calculate_label_rate(self.df_holdout)
+        print("The validation data: ")
+        self.calculate_label_rate(self.df_val)
+        print("The synthetic train data: ")
+        self.calculate_label_rate(self.df_synthetic_train)
 
     def prep_data_modeling(self):
         # 假設你的目標變量列名叫 'label'
@@ -156,9 +167,6 @@ class UtilityEvaluator:
 
         self.X_val = self.df_val.drop('label', axis=1)  # 驗證集特徵數據
         self.y_val = self.df_val['label']  # 驗證集目標數據
-
-        # self.X_test = self.df_test.drop('label', axis=1)  # 测试集特徵數據
-        # self.y_test = self.df_test['label']  # 测试集目標數據
 
     # Function to convert DataFrames to JSON-compatible dictionaries recursively
     def dataframe_to_dict(self, df):
@@ -186,12 +194,12 @@ class UtilityEvaluator:
 
             # 第一個subplot為ROC曲線
             plt.subplot(1, 2, 1)
-            colors = ['blue', 'green', 'red', 'purple', 'black', 'yellow', 'orange']  # 每个模型一个颜色
+            colors = ['blue', 'green', 'red', 'purple', 'black', 'brown', 'yellow', 'orange']  # 每个模型一个颜色
             model_index = 0
 
             # 第二個subplot為Precision-Recall曲線
             plt.subplot(1, 2, 2)
-            colors = ['blue', 'green', 'red', 'purple', 'black', 'yellow', 'orange']  # 重設顏色索引
+            colors = ['blue', 'green', 'red', 'purple', 'black', 'brown', 'yellow', 'orange']  # 重設顏色索引
             
             for name, model in models.items():
                 if name == 'DNN' or name == 'DeepFM':
@@ -299,15 +307,15 @@ class UtilityEvaluator:
         performance_comparison.to_csv(f"pipeline_results/{self.task_id}_performance_comparison.csv", index=False)
 
     def process_evaluation(self):
-        self.get_data()
+        self.read_data()
         self.prep_data_modeling()
         self.get_results_and_plot()
         self.compute_performance_comparison()
 
 #%%
 evaluator = UtilityEvaluator(
-    task_id = 14584
+    task_id = 31941
 )
-
+# evaluator.get_data()
 evaluator.process_evaluation()
 # %%
