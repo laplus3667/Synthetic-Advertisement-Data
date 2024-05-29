@@ -36,9 +36,10 @@ print("data is loaded...")
 
 #%%
 class UtilityEvaluator:
-    def __init__(self, task_id):
+    def __init__(self, task_id, synthetic_path, predictions_path=None):
           self.task_id = task_id
-        #   self.dataset = dataset
+          self.synthetic_path = synthetic_path
+          self.predictions_path = predictions_path
     
     def calculate_label_rate(self, df):
         # Get the total number of samples
@@ -51,7 +52,8 @@ class UtilityEvaluator:
         # Extract the count of negative labels (label == 0) from the label_counts series.
         negative_count = label_counts.get(0, 0)
         # Calculate the rate of positive labels to negative labels.
-        label_rate = positive_count / negative_count if negative_count != 0 else 0
+        # label_rate = positive_count / negative_count if negative_count != 0 else 0
+        label_rate = positive_count / total_samples
         
         # Print the sizes of positive and negative samples along with the label rate, formatted to two decimal places.
         print("Total Sample size is {}, Positive Sample size is {}, Negative Sample size is {}, label rate is {:.4f}".format(total_samples, positive_count, negative_count, label_rate))
@@ -105,9 +107,9 @@ class UtilityEvaluator:
         print(f"Validation data shape is {df_val.shape}")
 
         # shuffle the datasets
-        self.df_train = df_train.sample(frac=1).reset_index(drop=True)
-        self.df_holdout = df_holdout.sample(frac=1).reset_index(drop=True)
-        self.df_val = df_val.sample(frac=1).reset_index(drop=True)
+        self.df_train = df_train.sample(frac=1, random_state = 42).reset_index(drop=True)
+        self.df_holdout = df_holdout.sample(frac=1, random_state = 42).reset_index(drop=True)
+        self.df_val = df_val.sample(frac=1, random_state = 42).reset_index(drop=True)
 
         # 儲存隨機排序後的df_train
         self.df_train.to_csv(f'../../data/{self.task_id}/df_{self.task_id}_train.csv', index=False)
@@ -124,26 +126,30 @@ class UtilityEvaluator:
         self.df_val.to_csv(f'../../data/{self.task_id}/df_{self.task_id}_val.csv', index=False)
         # self.df_test.to_csv(f'../../data/{self.task_id}/df_{self.task_id}_test.csv', index=False)
 
+    def merge_synth_data(self):
+        """
+        After generating the synthetic data with both label 1 and 0, merge them to get the synthetic_train data and save to a csv file
+        """
+        base_path = f'../../data/{self.task_id}'
+        df_synthetic_train0 = pd.read_csv(f'{base_path}/{self.synthetic_path}/synthetic_df_{self.task_id}_train0.csv')
+        df_synthetic_train1 = pd.read_csv(f'{base_path}/{self.synthetic_path}/synthetic_df_{self.task_id}_train1.csv')
+        df_synthetic_train0['label'] = 0
+        df_synthetic_train1['label'] = 1
+        df_synthetic_train  = pd.concat([df_synthetic_train0, df_synthetic_train1])
+        df_synthetic_train = df_synthetic_train.sample(frac=1, random_state=42).reset_index(drop=True)
+        synthetic_train_path = f'{base_path}/{self.synthetic_path}/synthetic_df_{self.task_id}_train.csv'
+        df_synthetic_train.to_csv(synthetic_train_path, index=False)
+
     def read_data(self):
         """
         if all the files exist already, just read the datasets
         """
-        self.df_train = pd.read_csv(f'../../data/{self.task_id}/df_{self.task_id}_train.csv')
-        self.df_holdout = pd.read_csv(f'../../data/{self.task_id}/df_{self.task_id}_holdout.csv')
-        self.df_val = pd.read_csv(f'../../data/{self.task_id}/df_{self.task_id}_val.csv')
-        # Save combined synthetic data if the file does not exist
         base_path = f'../../data/{self.task_id}'
-        synthetic_train_path = f'{base_path}/synthetic/synthetic_df_{self.task_id}_train.csv'
-        if not os.path.exists(synthetic_train_path):
-            df_synthetic_train0 = pd.read_csv(f'../../data/{self.task_id}/synthetic/synthetic_df_{self.task_id}_train0.csv')
-            df_synthetic_train1 = pd.read_csv(f'../../data/{self.task_id}/synthetic/synthetic_df_{self.task_id}_train1.csv')
-            df_synthetic_train0['label'] = 0
-            df_synthetic_train1['label'] = 1
-            df_synthetic_train  = pd.concat([df_synthetic_train0, df_synthetic_train1])
-            self.df_synthetic_train = df_synthetic_train.sample(frac=1).reset_index(drop=True)
-            self.df_synthetic_train.to_csv(synthetic_train_path, index=False)
-        else:
-            self.df_synthetic_train = pd.read_csv(f'../../data/{self.task_id}/synthetic/synthetic_df_{self.task_id}_train.csv')
+        self.df_train = pd.read_csv(f'{base_path}/df_{self.task_id}_train.csv')
+        self.df_holdout = pd.read_csv(f'{base_path}/df_{self.task_id}_holdout.csv')
+        self.df_val = pd.read_csv(f'{base_path}/df_{self.task_id}_val.csv')
+        self.df_synthetic_train = pd.read_csv(f'{base_path}/{self.synthetic_path}/synthetic_df_{self.task_id}_train.csv')
+        
         print("The train data: ")
         self.calculate_label_rate(self.df_train)
         print("The holdout data: ")
@@ -203,7 +209,9 @@ class UtilityEvaluator:
             
             for name, model in models.items():
                 if name == 'DNN' or name == 'DeepFM':
-                    y_proba = np.loadtxt(f"../../data/{self.task_id}/predictions/{name}_{data}_{self.task_id}_predictions.txt")
+                    y_proba = np.loadtxt(f"../../data/{self.task_id}/predictions/predictions_original/{name}_{data}_{self.task_id}_predictions.txt")
+                    if data == "synthetic_train":
+                        y_proba = np.loadtxt(f"../../data/{self.task_id}/predictions/{self.predictions_path}/{name}_{data}_{self.task_id}_predictions.txt")
                     y_pred = (y_proba > 0.5).astype(int)
                 else:
                     try:
@@ -269,13 +277,13 @@ class UtilityEvaluator:
 
         # print(self.all_data_results)
         # Convert the dictionary of DataFrames to a dictionary of JSON-compatible dictionaries
-        json_data_dict = {key: self.dataframe_to_dict(df) for key, df in self.all_data_results.items()}
+        # json_data_dict = {key: self.dataframe_to_dict(df) for key, df in self.all_data_results.items()}
 
         # Define the file path where you want to save the dictionary
-        json_file_path = f'pipeline_results/{self.task_id}_all_data_results.json'
-        # Save the dictionary of DataFrames to a JSON file
-        with open(json_file_path, 'w') as json_file:
-            json.dump(json_data_dict, json_file, indent=4)  # Use indent for pretty formatting
+        # json_file_path = f'pipeline_results/{self.task_id}_all_data_results.json'
+        # # Save the dictionary of DataFrames to a JSON file
+        # with open(json_file_path, 'w') as json_file:
+        #     json.dump(json_data_dict, json_file, indent=4)  # Use indent for pretty formatting
 
     def compute_performance_comparison(self):
         performance_comparison = pd.DataFrame(index=models.keys(), columns=[
@@ -310,12 +318,15 @@ class UtilityEvaluator:
         self.read_data()
         self.prep_data_modeling()
         self.get_results_and_plot()
-        self.compute_performance_comparison()
+        # self.compute_performance_comparison()
 
 #%%
 evaluator = UtilityEvaluator(
-    task_id = 31941
+    task_id = 22100,
+    synthetic_path = "synthetic_original", # "synthetic_original" or "synthetic_{label_rate}"
+    predictions_path = "predictions_original" # "predictions_original" or "predictions_{label_rate}"
 )
-# evaluator.get_data()
-evaluator.process_evaluation()
+# evaluator.split_data() # if we run this task data for the first time
+# evaluator.merge_synth_data() # merge the synthetic label 1 and 0 data
+evaluator.process_evaluation() # if all the data files are ready
 # %%
