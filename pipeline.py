@@ -16,7 +16,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import json
 import xgboost as xgb
-from sklearn.naive_bayes import GaussianNB
+from sklearn.naive_bayes import GaussianNB, ComplementNB, MultinomialNB
 
 # 創建一個字典來存儲你想要訓練的模型
 models = {
@@ -27,6 +27,8 @@ models = {
     'Gradient Boosting': GradientBoostingClassifier(),
     'XGBoost': xgb.XGBClassifier(use_label_encoder=False, eval_metric='logloss'),
     'GaussianNB': GaussianNB(),
+    'ComplementNB': ComplementNB(),
+    'MultinomialNB': MultinomialNB(),
     'DNN': None,
     'DeepFM': None
 }
@@ -200,12 +202,23 @@ class UtilityEvaluator:
 
             # 第一個subplot為ROC曲線
             plt.subplot(1, 2, 1)
-            colors = ['blue', 'green', 'red', 'purple', 'black', 'brown', 'yellow', 'orange']  # 每个模型一个颜色
+            colors = [
+                'blue',      # Logistic Regression
+                'green',     # Decision Tree (tree-based)
+                'lightgreen',# Random Forest (tree-based)
+                'darkgreen', # Gradient Boosting (tree-based)
+                'yellowgreen',# XGBoost (tree-based)
+                'red',       # GaussianNB (NB model)
+                'lightcoral',# ComplementNB (NB model)
+                'indianred', # MultinomialNB (NB model)
+                'purple',    # DNN (deep learning model)
+                'mediumpurple' # DeepFM (deep learning model)
+            ]
             model_index = 0
 
             # 第二個subplot為Precision-Recall曲線
             plt.subplot(1, 2, 2)
-            colors = ['blue', 'green', 'red', 'purple', 'black', 'brown', 'yellow', 'orange']  # 重設顏色索引
+            colors = ['blue', 'green', 'lightgreen', 'darkgreen', 'yellowgreen', 'red', 'lightcoral', 'indianred', 'purple', 'mediumpurple']  # 重設顏色索引
             
             for name, model in models.items():
                 if name == 'DNN' or name == 'DeepFM':
