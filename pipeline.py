@@ -17,6 +17,7 @@ import seaborn as sns
 import json
 import xgboost as xgb
 from sklearn.naive_bayes import GaussianNB, ComplementNB, MultinomialNB
+from scipy.stats import wasserstein_distance
 
 # 創建一個字典來存儲你想要訓練的模型
 models = {
@@ -38,8 +39,9 @@ print("data is loaded...")
 
 #%%
 class UtilityEvaluator:
-    def __init__(self, task_id, synthetic_path, predictions_path=None):
+    def __init__(self, task_id, label_rate, synthetic_path, predictions_path=None):
           self.task_id = task_id
+          self.label_rate = label_rate
           self.synthetic_path = synthetic_path
           self.predictions_path = predictions_path
     
@@ -184,19 +186,19 @@ class UtilityEvaluator:
         datasets = {"train": (self.X_train, self.y_train), 
             "holdout": (self.X_holdout, self.y_holdout), 
             "synthetic_train": (self.X_synthetic_train, self.y_synthetic_train)}
-        self.all_data_results = {"train": None, "holdout": None, "synthetic_train": None}
+        
         # Initialize subplot indices
         roc_subplot_index = 1
         pr_subplot_index = 2
-        for data in self.all_data_results:
-            results = pd.DataFrame(index=models.keys(), columns=['Accuracy', 'AUC', 'TPR', 'FPR', 'TNR', 'FNR'])
-            performance_comparison = pd.DataFrame(index=models.keys(), 
-                                                  columns=["train_holdout_auc_diff", 
-                                                           "synth_train_auc_diff", 
-                                                           "auc_diff_ratio",
-                                                           "train_holdout_tpr_diff", 
-                                                           "synth_train_tpr_diff", 
-                                                           "tpr_diff_ratio"])
+
+        # train_tpr_scores = {}
+        # holdout_tpr_scores = {}
+        # synthetic_tpr_scores = {}
+
+        results = pd.DataFrame(columns=['Accuracy', 'AUC', 'TPR', 'FPR', 'TNR', 'FNR'])
+
+        for data in datasets:
+
             # 設定圖片尺寸和布局
             plt.figure(figsize=(12, 6))
 
@@ -221,6 +223,9 @@ class UtilityEvaluator:
             colors = ['blue', 'green', 'lightgreen', 'darkgreen', 'yellowgreen', 'red', 'lightcoral', 'indianred', 'purple', 'mediumpurple']  # 重設顏色索引
             
             for name, model in models.items():
+                curr_data = f"{data}_{name}"
+                # results[current_row_value] = curr_data
+
                 if name == 'DNN' or name == 'DeepFM':
                     y_proba = np.loadtxt(f"../../data/{self.task_id}/predictions/predictions_original/{name}_{data}_{self.task_id}_predictions.txt")
                     if data == "synthetic_train":
@@ -249,11 +254,22 @@ class UtilityEvaluator:
                 fnr = fn / (tp + fn)  # 假陰性率
 
                 # 固定小數點後三位並儲存結果
-                results.loc[name] = [
-                    round(accuracy, 3), round(auc_score, 3),
-                    round(tpr, 3), round(fpr, 3), round(tnr, 3), round(fnr, 3)
-                ]
-
+                results.loc[curr_data] = {
+                    'Accuracy': round(accuracy, 3),
+                    'AUC': round(auc_score, 3),
+                    'TPR': round(tpr, 3),
+                    'FPR': round(fpr, 3),
+                    'TNR': round(tnr, 3),
+                    'FNR': round(fnr, 3)
+                }
+                # results.loc[curr_data, 'Accuracy'] = round(accuracy, 3)
+                # results.loc[curr_data, 'AUC'] = round(auc_score, 3)
+                # results.loc[curr_data, 'TPR'] = round(tpr, 3)
+                # results.loc[curr_data, 'FPR'] = round(fpr, 3)
+                # results.loc[curr_data, 'TNR'] = round(tnr, 3)
+                # results.loc[curr_data, 'FNR'] = round(fnr, 3)
+                # print(results)
+                
                 # 計算ROC曲線及AUC
                 fpr, tpr, _ = roc_curve(self.y_val, y_proba)
                 roc_auc = auc(fpr, tpr)
@@ -271,9 +287,6 @@ class UtilityEvaluator:
                 plt.plot(recall, precision, color=colors[model_index], lw=2, label=f'{name} PR (AP = {ap:.2f})')
 
                 model_index += 1
-            print(data)
-            print(results)
-            self.all_data_results[data] = results
             plt.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--')
             plt.xlabel('False Positive Rate')
             plt.ylabel('True Positive Rate')
@@ -287,57 +300,30 @@ class UtilityEvaluator:
 
             plt.tight_layout()
             plt.show()
+        
+        results.to_csv(f"../pipeline_results/utility/{self.task_id}/{self.task_id}_mixed_{self.label_rate}.csv", index=True)
 
-        # print(self.all_data_results)
-        # Convert the dictionary of DataFrames to a dictionary of JSON-compatible dictionaries
-        # json_data_dict = {key: self.dataframe_to_dict(df) for key, df in self.all_data_results.items()}
+        # train_tpr_df = pd.DataFrame(list(synthetic_tpr_scores.items()), columns=['Model', 'TPR'])
+        # train_tpr_df.to_csv(f"../pipeline_results/utility/{self.task_id}/{self.task_id}_train.csv", index = False)
+        # holdout_tpr_df = pd.DataFrame(list(synthetic_tpr_scores.items()), columns=['Model', 'TPR'])
+        # holdout_tpr_df.to_csv(f"../pipeline_results/utility/{self.task_id}/{self.task_id}_holdout.csv", index = False)
 
-        # Define the file path where you want to save the dictionary
-        # json_file_path = f'pipeline_results/{self.task_id}_all_data_results.json'
-        # # Save the dictionary of DataFrames to a JSON file
-        # with open(json_file_path, 'w') as json_file:
-        #     json.dump(json_data_dict, json_file, indent=4)  # Use indent for pretty formatting
-
-    def compute_performance_comparison(self):
-        performance_comparison = pd.DataFrame(index=models.keys(), columns=[
-            "train_holdout_auc_diff", "synth_train_auc_diff", "auc_diff_ratio",
-            "train_holdout_tpr_diff", "synth_train_tpr_diff", "tpr_diff_ratio"
-        ])
-        for name in models.keys():
-            train_auc = self.all_data_results['train'].loc[name, 'AUC']
-            holdout_auc = self.all_data_results['holdout'].loc[name, 'AUC']
-            synth_train_auc = self.all_data_results['synthetic_train'].loc[name, 'AUC']
-
-            train_holdout_auc_diff = train_auc - holdout_auc
-            synth_train_auc_diff = train_auc - synth_train_auc
-            auc_diff_ratio = (synth_train_auc_diff - train_holdout_auc_diff) / train_holdout_auc_diff
-
-            train_tpr = self.all_data_results['train'].loc[name, 'TPR']
-            holdout_tpr = self.all_data_results['holdout'].loc[name, 'TPR']
-            synth_train_tpr = self.all_data_results['synthetic_train'].loc[name, 'TPR']
-
-            train_holdout_tpr_diff = train_tpr - holdout_tpr
-            synth_train_tpr_diff = train_tpr - synth_train_tpr
-            tpr_diff_ratio = (synth_train_tpr_diff - train_holdout_tpr_diff) / train_holdout_tpr_diff
-
-            performance_comparison.loc[name] = [
-                train_holdout_auc_diff, synth_train_auc_diff, auc_diff_ratio,
-                train_holdout_tpr_diff, synth_train_tpr_diff, tpr_diff_ratio
-            ]
-        print(performance_comparison)
-        performance_comparison.to_csv(f"pipeline_results/{self.task_id}_performance_comparison.csv", index=False)
+        # synthetic_tpr_df = pd.DataFrame(list(synthetic_tpr_scores.items()), columns=['Model', 'TPR'])
+        # synthetic_tpr_df.to_csv(f"../pipeline_results/utility/{self.task_id}/{self.task_id}_{self.synthetic_path}.csv", index = False)
+        # print("tpr saved!")
 
     def process_evaluation(self):
         self.read_data()
         self.prep_data_modeling()
         self.get_results_and_plot()
-        # self.compute_performance_comparison()
 
 #%%
+label_rate = "original"
 evaluator = UtilityEvaluator(
-    task_id = 22100,
-    synthetic_path = "synthetic_original", # "synthetic_original" or "synthetic_{label_rate}"
-    predictions_path = "predictions_original" # "predictions_original" or "predictions_{label_rate}"
+    task_id = 31941,
+    label_rate = label_rate,
+    synthetic_path = f"synthetic_{label_rate}", # "synthetic_original" or "synthetic_{label_rate}"
+    predictions_path = f"predictions_{label_rate}" # "predictions_original" or "predictions_{label_rate}"
 )
 # evaluator.split_data() # if we run this task data for the first time
 # evaluator.merge_synth_data() # merge the synthetic label 1 and 0 data
