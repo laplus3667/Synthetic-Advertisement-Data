@@ -185,7 +185,7 @@ class UtilityEvaluator:
     def get_results_and_plot(self):
         datasets = {"train": (self.X_train, self.y_train), 
             "holdout": (self.X_holdout, self.y_holdout), 
-            "synthetic_train": (self.X_synthetic_train, self.y_synthetic_train)}
+            "synthetic": (self.X_synthetic_train, self.y_synthetic_train)}
         
         # Initialize subplot indices
         roc_subplot_index = 1
@@ -228,7 +228,7 @@ class UtilityEvaluator:
 
                 if name == 'DNN' or name == 'DeepFM':
                     y_proba = np.loadtxt(f"../../data/{self.task_id}/predictions/predictions_original/{name}_{data}_{self.task_id}_predictions.txt")
-                    if data == "synthetic_train":
+                    if data == "synthetic":
                         y_proba = np.loadtxt(f"../../data/{self.task_id}/predictions/{self.predictions_path}/{name}_{data}_{self.task_id}_predictions.txt")
                     y_pred = (y_proba > 0.5).astype(int)
                 else:
@@ -318,7 +318,7 @@ class UtilityEvaluator:
         self.get_results_and_plot()
 
 #%%
-label_rate = "original"
+label_rate = "0.04"
 evaluator = UtilityEvaluator(
     task_id = 31941,
     label_rate = label_rate,
